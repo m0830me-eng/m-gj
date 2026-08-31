@@ -45,7 +45,7 @@ jobs:
       - name: Run monitor
         env:
           RUN_SECONDS: ${{ steps.duration.outputs.seconds }}
-          CHECK_INTERVAL: "10"
+          CHECK_INTERVAL: "5"
           DISCORD_LOTTE_WORLDTOWER: ${{ secrets.DISCORD_LOTTE_WORLDTOWER }}
           DISCORD_MENTION_ID: ${{ secrets.DISCORD_MENTION_ID }}
         run: |
