@@ -1,0 +1,145 @@
+name: Lotte Cancel - Gyeongju 2026-09-10
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # 한국시간 06:07
+    - cron: "7 21 * * *"
+
+    # 한국시간 11:37
+    - cron: "37 2 * * *"
+
+    # 한국시간 17:07
+    - cron: "7 8 * * *"
+
+    # 한국시간 22:37
+    - cron: "37 13 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lotte-cancel-gyeongju-20260910
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Set monitoring duration
+        id: duration
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CRON_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+
+          event_name = os.environ.get("EVENT_NAME", "")
+          schedule = os.environ.get("CRON_SCHEDULE", "")
+
+          # 수동 실행은 10분 테스트
+          if event_name == "workflow_dispatch":
+              seconds = 600
+
+          else:
+              kst = ZoneInfo("Asia/Seoul")
+              now = datetime.now(kst)
+
+              next_times = {
+                  "7 21 * * *": (11, 37),
+                  "37 2 * * *": (17, 7),
+                  "7 8 * * *": (22, 37),
+                  "37 13 * * *": (0, 0),
+              }
+
+              hour, minute = next_times[schedule]
+
+              target = now.replace(
+                  hour=hour,
+                  minute=minute,
+                  second=0,
+                  microsecond=0,
+              )
+
+              if target <= now:
+                  target += timedelta(days=1)
+
+              # 다음 작업과 겹치지 않도록 90초 먼저 종료
+              seconds = max(
+                  60,
+                  int((target - now).total_seconds()) - 90
+              )
+
+          print(f"RUN_SECONDS={seconds}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"seconds={seconds}\n")
+          PY
+
+      - name: Run Gyeongju cancel-ticket monitor
+        env:
+          RUN_SECONDS: ${{ steps.duration.outputs.seconds }}
+          CHECK_INTERVAL: "10"
+          DISCORD_LOTTE_WORLDTOWER: ${{ secrets.DISCORD_LOTTE_WORLDTOWER }}
+          DISCORD_MENTION_ID: ${{ secrets.DISCORD_MENTION_ID }}
+        run: |
+          python -u lotte_cancel_gyeongju_20260910.py
+
+      - name: Save Gyeongju state
+        if: always()
+        shell: bash
+        run: |
+          set -e
+
+          if [ ! -f "state_cancel_gyeongju_20260910.json" ]; then
+            echo "No state file yet"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "state_cancel_gyeongju_20260910.json"
+
+          if git diff --cached --quiet; then
+            echo "No state changes"
+            exit 0
+          fi
+
+          git commit -m "Update Gyeongju cancel-ticket state"
+
+          for attempt in 1 2 3; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" || true
+
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              echo "State push complete"
+              exit 0
+            fi
+
+            echo "Push retry $attempt/3"
+            sleep 5
+          done
+
+          echo "State push failed after retries"
+          exit 1
