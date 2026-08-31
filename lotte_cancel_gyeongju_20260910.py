@@ -29,7 +29,7 @@ TARGET_KIND = "GV"
 
 STATE_FILE = Path("state_cancel_gyeongju_20260910.json")
 
-CHECK_INTERVAL = float(os.getenv("CHECK_INTERVAL", "10"))
+CHECK_INTERVAL = float(os.getenv("CHECK_INTERVAL", "5"))
 LOG_INTERVAL = 600
 RUN_SECONDS = int(os.getenv("RUN_SECONDS", "19200"))
 
@@ -252,9 +252,10 @@ def seat_snapshot(row, previous_remain=None):
     if remain is not None:
         return max(0, remain), booking, "API_COUNT"
 
+    # 좌석 숫자가 없는 Y 상태만으로는 취소표라고 판단하지 않는다.
+    # 롯데 API가 매진 회차를 순간적으로 Y로 표시하는 경우의 오알림 방지.
     if booking in {"Y", "YES", "TRUE", "1"}:
-        inferred = max(1, int(previous_remain or 0))
-        return inferred, booking, "OPEN_INFERRED"
+        return None, booking, "OPEN_WITHOUT_COUNT"
 
     return None, booking, "UNKNOWN"
 
@@ -455,7 +456,7 @@ def main():
                         log(
                             "정상 감시중 · "
                             f"잔여 {current}석 · "
-                            "10초 간격 확인중"
+                            f"{CHECK_INTERVAL:g}초 간격 확인중"
                         )
                         last_status_log = time.time()
 
