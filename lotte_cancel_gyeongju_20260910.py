@@ -19,6 +19,10 @@ SITE_NAME = "롯데시네마 월드타워"
 CINEMA_ID = "1|0001|1016"
 CINEMA_CODE = "1016"
 
+# ============================================================
+# 경주기행 취소표 전용
+# ============================================================
+
 TARGET_MOVIE = "경주기행"
 TARGET_DATE = "2026-09-10"
 TARGET_START = "19:30"
@@ -30,9 +34,15 @@ TARGET_KIND = "GV"
 
 STATE_FILE = Path("state_cancel_gyeongju_20260910.json")
 
+# 실제 취소표 확인 간격: 10초
 CHECK_INTERVAL = float(os.getenv("CHECK_INTERVAL", "10"))
+
+# 평상시 Actions 로그 표시 간격: 10분
+LOG_INTERVAL = 600
+
 RUN_SECONDS = int(os.getenv("RUN_SECONDS", "19200"))
 
+# GitHub Secrets
 DISCORD_WEBHOOK = os.getenv(
     "DISCORD_LOTTE_WORLDTOWER",
     ""
@@ -63,22 +73,34 @@ SESSION.headers.update({
 
 def log(message=""):
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{now} KST] {message}", flush=True)
+    print(
+        f"[{now} KST] {message}",
+        flush=True
+    )
 
 
 def norm(value):
-    return " ".join(str(value or "").split())
+    return " ".join(
+        str(value or "").split()
+    )
 
 
 def compact(value):
-    return re.sub(r"\s+", "", norm(value))
+    return re.sub(
+        r"\s+",
+        "",
+        norm(value)
+    )
 
 
 def lotte_post(payload):
     files = {
         "paramList": (
             None,
-            json.dumps(payload, ensure_ascii=False),
+            json.dumps(
+                payload,
+                ensure_ascii=False
+            ),
         )
     }
 
@@ -118,13 +140,18 @@ def fetch_target_rows():
     )
 
     def walk(value, inherited=None):
-        inherited = dict(inherited or {})
+        inherited = dict(
+            inherited or {}
+        )
 
         if isinstance(value, dict):
             context = dict(inherited)
 
             for key in context_keys:
-                if key in value and norm(value.get(key)):
+                if (
+                    key in value
+                    and norm(value.get(key))
+                ):
                     context[key] = value.get(key)
 
             start = norm(
@@ -145,11 +172,17 @@ def fetch_target_rows():
                 rows.append(row)
 
             for child in value.values():
-                walk(child, context)
+                walk(
+                    child,
+                    context
+                )
 
         elif isinstance(value, list):
             for child in value:
-                walk(child, inherited)
+                walk(
+                    child,
+                    inherited
+                )
 
     walk(data)
 
@@ -189,16 +222,21 @@ def is_target(row):
         row.get("AccompanyTypeCode")
     )
 
-    time_ok = start == TARGET_START
+    time_ok = (
+        start == TARGET_START
+    )
 
     screen_ok = (
         screen_id == TARGET_SCREEN_ID
-        or compact(screen_name) == compact(TARGET_SCREEN)
+        or compact(screen_name)
+        == compact(TARGET_SCREEN)
     )
 
     movie_ok = (
-        compact(movie_name) == compact(TARGET_MOVIE)
-        or rep_code == TARGET_REP_MOVIE_CODE
+        compact(movie_name)
+        == compact(TARGET_MOVIE)
+        or rep_code
+        == TARGET_REP_MOVIE_CODE
     )
 
     gv_ok = event_code in {
@@ -250,23 +288,35 @@ def find_target(rows):
 
 
 def parse_int(value):
-    text = norm(value).replace(",", "")
+    text = norm(value).replace(
+        ",",
+        ""
+    )
 
     if not text:
         return None
 
-    match = re.search(r"-?\d+", text)
+    match = re.search(
+        r"-?\d+",
+        text
+    )
 
     if not match:
         return None
 
     try:
-        return int(match.group(0))
+        return int(
+            match.group(0)
+        )
+
     except ValueError:
         return None
 
 
-def seat_snapshot(row, previous_remain=None):
+def seat_snapshot(
+    row,
+    previous_remain=None
+):
     booking = norm(
         row.get("IsBookingYN")
         or row.get("BookingYN")
@@ -279,16 +329,30 @@ def seat_snapshot(row, previous_remain=None):
     )
 
     if raw_remain is None:
-        raw_remain = row.get("RemainingSeatCount")
+        raw_remain = row.get(
+            "RemainingSeatCount"
+        )
 
-    remain = parse_int(raw_remain)
+    remain = parse_int(
+        raw_remain
+    )
 
+    # E = 매진
     if booking == "E":
-        return 0, booking, "SOLD_OUT"
+        return (
+            0,
+            booking,
+            "SOLD_OUT"
+        )
 
     if remain is not None:
-        return max(0, remain), booking, "API_COUNT"
+        return (
+            max(0, remain),
+            booking,
+            "API_COUNT"
+        )
 
+    # 예매 가능인데 좌석 숫자만 누락된 경우
     if booking in {
         "Y",
         "YES",
@@ -300,9 +364,17 @@ def seat_snapshot(row, previous_remain=None):
             int(previous_remain or 0)
         )
 
-        return inferred, booking, "OPEN_INFERRED"
+        return (
+            inferred,
+            booking,
+            "OPEN_INFERRED"
+        )
 
-    return None, booking, "UNKNOWN"
+    return (
+        None,
+        booking,
+        "UNKNOWN"
+    )
 
 
 def load_state():
@@ -413,44 +485,81 @@ def target_finished():
 
 def main():
     log("=" * 70)
-    log("LOTTE CINEMA WORLDTOWER GYEONGJU CANCEL-TICKET MONITOR")
+    log(
+        "LOTTE CINEMA WORLDTOWER "
+        "GYEONGJU CANCEL-TICKET MONITOR"
+    )
     log("=" * 70)
-    log(f"TARGET: {TARGET_MOVIE}")
-    log(f"DATE: {TARGET_DATE}")
-    log(f"TIME: {TARGET_START}-{TARGET_END}")
-    log(f"SCREEN: {TARGET_SCREEN}")
-    log(f"TYPE: {TARGET_KIND}")
-    log(f"CHECK INTERVAL: {CHECK_INTERVAL:g} seconds")
-    log("RULE: 이전 잔여석보다 증가하면 취소표 알림")
-    log("EXAMPLE: 0→1 / 1→2 / 2→4 = ALERT")
-    log("EXAMPLE: 4→2 / 2→2 = NO ALERT")
+
+    log(
+        f"TARGET: {TARGET_MOVIE} / "
+        f"{TARGET_DATE} / "
+        f"{TARGET_START}-{TARGET_END} / "
+        f"{TARGET_SCREEN} / "
+        f"{TARGET_KIND}"
+    )
+
+    log(
+        f"CHECK: {CHECK_INTERVAL:g}초마다 실제 감지"
+    )
+
+    log(
+        "LOG: 정상 상태는 10분마다 표시"
+    )
+
+    log(
+        "ALERT: 잔여석 증가 시 즉시 Discord 알림"
+    )
+
+    log(
+        "RULE: 0→1 / 1→2 / 2→4 = ALERT"
+    )
+
+    log(
+        "RULE: 4→2 / 2→2 = NO ALERT"
+    )
+
     log("=" * 70)
 
     state = load_state()
+
     started = time.time()
+
     cycle = 0
 
-    while time.time() - started < RUN_SECONDS:
+    # 정상 상태 로그를 마지막으로 출력한 시각
+    last_status_log = 0.0
+
+    while (
+        time.time() - started
+        < RUN_SECONDS
+    ):
         cycle += 1
 
         if target_finished():
             log(
-                "대상 회차 종료 시각이 지나 감시를 종료합니다."
+                "대상 회차 종료 시각이 지나 "
+                "감시를 종료합니다."
             )
             break
 
         cycle_started = time.time()
 
         try:
-            rows, response = fetch_target_rows()
-            target = find_target(rows)
+            rows, response = (
+                fetch_target_rows()
+            )
+
+            target = find_target(
+                rows
+            )
 
             if target is None:
+                # 회차를 못 찾는 건 중요한 문제라 즉시 로그
                 log(
-                    f"CYCLE #{cycle} "
-                    f"HTTP={response.status_code} "
-                    f"ROWS={len(rows)} "
-                    "TARGET=NOT_FOUND"
+                    f"⚠️ TARGET_NOT_FOUND / "
+                    f"HTTP={response.status_code} / "
+                    f"ROWS={len(rows)}"
                 )
 
             else:
@@ -458,52 +567,78 @@ def main():
 
                 if (
                     state.get("initialized")
-                    and state.get("last_remain") is not None
+                    and state.get(
+                        "last_remain"
+                    ) is not None
                 ):
                     previous = int(
-                        state["last_remain"]
+                        state[
+                            "last_remain"
+                        ]
                     )
 
-                current, booking, count_source = seat_snapshot(
+                (
+                    current,
+                    booking,
+                    count_source
+                ) = seat_snapshot(
                     target,
                     previous_remain=previous
                 )
 
                 if current is None:
+                    # 좌석 상태를 못 읽으면 즉시 표시
                     log(
-                        f"CYCLE #{cycle} "
-                        "TARGET=FOUND "
-                        f"IsBookingYN={booking or '(blank)'} "
-                        "REMAIN=UNKNOWN "
-                        "-> state 유지"
+                        "⚠️ TARGET=FOUND / "
+                        f"IsBookingYN="
+                        f"{booking or '(blank)'} / "
+                        "REMAIN=UNKNOWN"
                     )
 
-                elif not state.get("initialized"):
+                elif not state.get(
+                    "initialized"
+                ):
+                    # 첫 실행 기준값 저장
                     state = {
                         "initialized": True,
-                        "target_movie": TARGET_MOVIE,
-                        "target_date": TARGET_DATE,
-                        "target_start": TARGET_START,
-                        "target_end": TARGET_END,
-                        "target_screen": TARGET_SCREEN,
-                        "last_remain": current,
-                        "last_booking": booking,
-                        "count_source": count_source,
-                        "updated_at_kst": datetime.now(
-                            KST
-                        ).isoformat(
-                            timespec="seconds"
-                        ),
+                        "target_movie":
+                            TARGET_MOVIE,
+                        "target_date":
+                            TARGET_DATE,
+                        "target_start":
+                            TARGET_START,
+                        "target_end":
+                            TARGET_END,
+                        "target_screen":
+                            TARGET_SCREEN,
+                        "last_remain":
+                            current,
+                        "last_booking":
+                            booking,
+                        "count_source":
+                            count_source,
+                        "updated_at_kst":
+                            datetime.now(
+                                KST
+                            ).isoformat(
+                                timespec="seconds"
+                            ),
                     }
 
-                    save_state(state)
+                    save_state(
+                        state
+                    )
 
                     log(
-                        f"CYCLE #{cycle} "
-                        "BASELINE SET: "
+                        "✅ BASELINE SET: "
                         f"잔여 {current}석 / "
-                        f"IsBookingYN={booking or '(blank)'} / "
+                        f"IsBookingYN="
+                        f"{booking or '(blank)'} / "
                         f"{count_source}"
+                    )
+
+                    last_status_log = (
+                        time.time()
                     )
 
                 else:
@@ -514,43 +649,75 @@ def main():
                         )
                     )
 
-                    increased = current > previous
-
-                    log(
-                        f"CYCLE #{cycle} "
-                        "TARGET=FOUND "
-                        f"잔여 {previous}→{current}석 / "
-                        f"IsBookingYN={booking or '(blank)'} / "
-                        f"{count_source} / "
-                        f"{'INCREASE' if increased else 'NO INCREASE'}"
+                    increased = (
+                        current > previous
                     )
 
+                    # ===========================================
+                    # 좌석 증가 = 즉시 알림
+                    # ===========================================
                     if increased:
+                        log(
+                            "🎟️ 취소표 감지: "
+                            f"잔여 "
+                            f"{previous}→{current}석"
+                        )
+
                         discord_post(
                             cancel_alert_text()
                         )
 
                         log(
-                            "✅ 취소표 알림 전송: "
-                            f"잔여 {previous}→{current}석"
+                            "✅ Discord 취소표 알림 전송 완료"
                         )
 
+                        last_status_log = (
+                            time.time()
+                        )
+
+                    # ===========================================
+                    # 평상시에는 10분에 한 번만 로그 표시
+                    # 실제 API 확인은 계속 10초마다 진행
+                    # ===========================================
+                    elif (
+                        time.time()
+                        - last_status_log
+                        >= LOG_INTERVAL
+                    ):
+                        log(
+                            "정상 감시중 · "
+                            f"잔여 {current}석 · "
+                            f"10초 간격 확인중"
+                        )
+
+                        last_status_log = (
+                            time.time()
+                        )
+
+                    # 감소든 동일이든 현재 값을 새 기준으로 저장
                     state.update({
-                        "last_remain": current,
-                        "last_booking": booking,
-                        "count_source": count_source,
-                        "updated_at_kst": datetime.now(
-                            KST
-                        ).isoformat(
-                            timespec="seconds"
-                        ),
+                        "last_remain":
+                            current,
+                        "last_booking":
+                            booking,
+                        "count_source":
+                            count_source,
+                        "updated_at_kst":
+                            datetime.now(
+                                KST
+                            ).isoformat(
+                                timespec="seconds"
+                            ),
                     })
 
-                    save_state(state)
+                    save_state(
+                        state
+                    )
 
         except Exception as error:
+            # 오류는 10분을 기다리지 않고 즉시 표시
             log(
-                f"CYCLE #{cycle} ERROR: "
+                f"❌ ERROR: "
                 f"{type(error).__name__}: "
                 f"{error}"
             )
@@ -570,7 +737,9 @@ def main():
                 sleep_for
             )
 
-    log("MONITOR FINISHED")
+    log(
+        "MONITOR FINISHED"
+    )
 
 
 if __name__ == "__main__":
