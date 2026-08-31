@@ -4,17 +4,9 @@ on:
   workflow_dispatch:
 
   schedule:
-    # 한국시간 06:07
-    - cron: "7 21 * * *"
-
-    # 한국시간 11:37
-    - cron: "37 2 * * *"
-
-    # 한국시간 17:07
-    - cron: "7 8 * * *"
-
-    # 한국시간 22:37
-    - cron: "37 13 * * *"
+    # KST 02:07 / 06:07 / 10:07 / 14:07 / 18:07 / 22:07
+    # UTC 17:07 / 21:07 / 01:07 / 05:07 / 09:07 / 13:07
+    - cron: "7 1,5,9,13,17,21 * * *"
 
 permissions:
   contents: write
@@ -26,7 +18,7 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 345
+    timeout-minutes: 245
 
     steps:
       - name: Checkout
@@ -46,58 +38,48 @@ jobs:
       - name: Set monitoring duration
         id: duration
         shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          CRON_SCHEDULE: ${{ github.event.schedule }}
         run: |
           python - <<'PY'
           import os
           from datetime import datetime, timedelta
           from zoneinfo import ZoneInfo
 
-          event_name = os.environ.get("EVENT_NAME", "")
-          schedule = os.environ.get("CRON_SCHEDULE", "")
+          kst = ZoneInfo("Asia/Seoul")
+          now = datetime.now(kst)
 
-          # 수동 실행은 10분 테스트
-          if event_name == "workflow_dispatch":
-              seconds = 600
+          # 다음 자동 시작 시각:
+          # 02:07 / 06:07 / 10:07 / 14:07 / 18:07 / 22:07 KST
+          hours = [2, 6, 10, 14, 18, 22]
 
-          else:
-              kst = ZoneInfo("Asia/Seoul")
-              now = datetime.now(kst)
+          candidates = []
+          for day_add in (0, 1):
+              day = now.date() + timedelta(days=day_add)
+              for hour in hours:
+                  candidates.append(
+                      datetime(
+                          day.year, day.month, day.day,
+                          hour, 7, 0,
+                          tzinfo=kst,
+                      )
+                  )
 
-              next_times = {
-                  "7 21 * * *": (11, 37),
-                  "37 2 * * *": (17, 7),
-                  "7 8 * * *": (22, 37),
-                  "37 13 * * *": (0, 0),
-              }
+          next_start = min(t for t in candidates if t > now)
 
-              hour, minute = next_times[schedule]
+          # 다음 작업 시작 90초 전까지 현재 작업이 감시.
+          seconds = max(
+              60,
+              int((next_start - now).total_seconds()) - 90
+          )
 
-              target = now.replace(
-                  hour=hour,
-                  minute=minute,
-                  second=0,
-                  microsecond=0,
-              )
-
-              if target <= now:
-                  target += timedelta(days=1)
-
-              # 다음 작업과 겹치지 않도록 90초 먼저 종료
-              seconds = max(
-                  60,
-                  int((target - now).total_seconds()) - 90
-              )
-
-          print(f"RUN_SECONDS={seconds}")
+          print("KST NOW:", now.strftime("%Y-%m-%d %H:%M:%S"))
+          print("NEXT AUTO:", next_start.strftime("%Y-%m-%d %H:%M:%S"))
+          print("RUN_SECONDS:", seconds)
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"seconds={seconds}\n")
           PY
 
-      - name: Run Gyeongju cancel-ticket monitor
+      - name: Run monitor
         env:
           RUN_SECONDS: ${{ steps.duration.outputs.seconds }}
           CHECK_INTERVAL: "10"
@@ -106,7 +88,7 @@ jobs:
         run: |
           python -u lotte_cancel_gyeongju_20260910.py
 
-      - name: Save Gyeongju state
+      - name: Save state
         if: always()
         shell: bash
         run: |
