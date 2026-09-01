@@ -331,8 +331,8 @@ def cancel_alert_text():
         f"**🎬 {SITE_NAME} · {TARGET_KIND}**",
         f"**📅 {TARGET_DATE}**",
         (
-            f"**[🎟 {TARGET_START}–{TARGET_END} · "
-            f"{TARGET_MOVIE} · {TARGET_SCREEN}]({url})**"
+            f"[**🎟 {TARGET_START}–{TARGET_END} · "
+            f"{TARGET_MOVIE} · {TARGET_SCREEN}**]({url})"
         ),
     ])
 
